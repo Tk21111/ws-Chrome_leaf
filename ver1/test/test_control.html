@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Screen Broadcast + Remote Control</title>
+  <style>
+    body {
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 16px;
+    }
+    video {
+      border-radius: 8px;
+      box-shadow: 0 0 20px #000;
+      width: 90vw;
+      max-width: 1200px;
+      height: auto;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+    }
+    button, input {
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Screen Broadcast (WebSocket Signaling) - Remote Control Enabled</h2>
+  <video id="video" autoplay playsinline></video>
+  <div class="controls">
+    <label>Auth token: <input id="token" value="{AUTH_TOKEN}" style="width:320px"></label>
+    <button id="connect">Connect</button>
+  </div>
+  <p>Click inside the video to send clicks. Use mouse wheel to scroll. Press keys to send keyboard events (when 'Video Focus' checkbox is checked).</p>
+  <label><input type="checkbox" id="videoFocus"> Video Focus (capture keyboard)</label>
+
+  <script>
+    let ws;
+    let pc;
+    const video = document.getElementById('video');
+    const connectBtn = document.getElementById('connect');
+    const tokenInput = document.getElementById('token');
+    const videoFocus = document.getElementById('videoFocus');
+
+    async function connect() {
+      const token = tokenInput.value;
+      ws = new WebSocket(`ws:/localhost:3030/ws`);
+
+      ws.onopen = async () => {
+        // auth
+        ws.send(JSON.stringify({ type: 'auth', token }));
+      };
+
+      ws.onmessage = async (evt) => {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'auth') {
+          if (!msg.ok) {
+            alert('Auth failed: ' + (msg.reason || ''));
+            ws.close();
+            return;
+          }
+
+          // create RTCPeerConnection and offer
+          pc = new RTCPeerConnection();
+          pc.ontrack = e => {
+            video.srcObject = e.streams[0];
+          };
+
+
+
+          // handle server ICE candidates if any (we also send our candidates)
+          pc.onicecandidate = e => {
+            if (e.candidate) {
+              ws.send(JSON.stringify({ type: 'candidate', candidate: e.candidate }));
+            }
+          };
+
+            pc.addTransceiver("video", { direction: "recvonly" });
+
+          // create a data channel for future features if needed
+          const dc = pc.createDataChannel('chat');
+
+          // create offer
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          // send offer
+          ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+        } else if (msg.type === 'answer') {
+          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        } else if (msg.type === 'candidate') {
+          // server ICE candidate (server might send odd structure) - ignore or log
+          console.log('server candidate', msg.candidate);
+        } else {
+          console.log('ws msg', msg);
+        }
+      };
+
+      ws.onclose = () => console.log('ws closed');
+      ws.onerror = e => console.error('ws err', e);
+    }
+
+    // map click coords to normalized (0..1)
+    function normalizeClientCoords(clientX, clientY) {
+      const rect = video.getBoundingClientRect();
+      const x = (clientX - rect.left) / rect.width;
+      const y = (clientY - rect.top) / rect.height;
+      return { x, y };
+    }
+
+    video.addEventListener('click', (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const { x, y } = normalizeClientCoords(ev.clientX, ev.clientY);
+      ws.send(JSON.stringify({
+        type: 'control',
+        action: 'mouse',
+        payload: { event: 'click', x: x, y: y, button: ev.button === 2 ? 'right' : 'left' }
+      }));
+    });
+
+    // wheel -> scroll
+    video.addEventListener('wheel', (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const dy = Math.sign(ev.deltaY) * -120; // invert so wheel up maps to positive
+      ws.send(JSON.stringify({
+        type: 'control',
+        action: 'scroll',
+        payload: { dx: 0, dy: dy }
+      }));
+      ev.preventDefault();
+    });
+
+    // keyboard
+    window.addEventListener('keydown', (ev) => {
+      if (!videoFocus.checked) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const key = ev.key === ' ' ? 'space' : ev.key;
+      ws.send(JSON.stringify({ type: 'control', action: 'key', payload: { event: 'down', key: key } }));
+      ev.preventDefault();
+    });
+
+    window.addEventListener('keyup', (ev) => {
+      if (!videoFocus.checked) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const key = ev.key === ' ' ? 'space' : ev.key;
+      ws.send(JSON.stringify({ type: 'control', action: 'key', payload: { event: 'up', key: key } }));
+      ev.preventDefault();
+    });
+
+    connectBtn.onclick = () => connect();
+  </script>
+</body>
+</html>
