@@ -1,6 +1,7 @@
+mod utils;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+use utils::chrome::open_chrome; // import the function
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,6 +20,11 @@ async fn main() -> anyhow::Result<()> {
 
         let msg = String::from_utf8_lossy(&buffer[..n]);
         println!("Received : {}" , msg);
+
+        let urls: Vec<String> = serde_json::from_str(&msg)?;
+        if !urls.is_empty() {
+            open_chrome(urls);
+        } 
     }
     
 }

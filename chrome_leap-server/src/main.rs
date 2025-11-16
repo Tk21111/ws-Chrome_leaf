@@ -28,7 +28,7 @@ async fn main() {
     let (global_tx, _) = broadcast::channel::<String>(16);
 
     let _keep_local_alive = local_tx.clone();
-    let _keep_global_alive = global_tx.clone();
+let _keep_global_alive = global_tx.clone();
     //test only
     //TODO - remplace this 
     // function ----- local_tx ----> ws 
