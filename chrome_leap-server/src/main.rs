@@ -1,55 +1,186 @@
-use quinn::{Endpoint, Incoming, ServerConfig};
-use std::{error::Error, fs, net::SocketAddr};
+use futures_util::{StreamExt, SinkExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{accept_async, tungstenite::protocol::Message};
+
+use tokio::sync::broadcast;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::time::sleep;
+#[derive(Serialize)]
+#[serde(tag = "action")]
+enum ServerMsg {
+    #[serde(rename = "get_tabs")]
+    GetTabs,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "action")]
+enum ClientMsg {
+    #[serde(rename = "tabs")]
+    Tabs { tabs: Vec<String> },
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    
-    let cert_der = fs::read("cert.der")?;
-    let key_der = fs::read("key.der")?;
+async fn main() {
 
-    let server_config = ServerConfig::with_single_cert(
-        vec![rustls::pki_types::CertificateDer::from(cert_der)], rustls::pki_types::PrivatePkcs8KeyDer::from(key_der).into(),
-    )?;
+    let (local_tx, _) = broadcast::channel::<String>(16);
+    let (global_tx, _) = broadcast::channel::<String>(16);
 
-    let bind_addr = "127.0.0.1:5000".parse()?;
-    let endpoint = Endpoint::server(server_config, bind_addr)?;
-
-    println!("listening at {}" , endpoint.local_addr()?);
-
-    while let Some(conn) = endpoint.accept().await {
-        println!("connection from {}" , conn.remote_address());
-
+    let _keep_local_alive = local_tx.clone();
+    let _keep_global_alive = global_tx.clone();
+    //test only
+    //TODO - remplace this 
+    // function ----- local_tx ----> ws 
+    {
+        let local_tx_clone = local_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(conn).await {
-                println!("connection fail {}" , e );
-            }
-        });
-    }
-    Ok(())
-}
+            // This task will run forever
+            loop {
+                // Wait for 10 seconds
+                sleep(Duration::from_secs(10)).await;
 
-async fn handle_conn(conn : Incoming) -> Result<() , Box<dyn Error>> {
-    let connection = conn.await?;
-
-    while let Ok((mut send , mut recv)) = connection.accept_bi().await {
-        tokio::spawn(async move {
-            if let Err(e) = handle_stream(send, recv).await {
-                println!("Stream failed: {}", e);
+                // Send the "edge hit" event to all listeners
+                println!("--- GLOBAL EVENT: Simulating edge hit! Broadcasting 'get_tabs' ---");
+                if let Err(e) = local_tx_clone.send("get_tabs".to_string()) {
+                    println!("Broadcast send error: {}", e);
+                }
             }
         });
     }
 
-    Ok(())
-}
+    //websocket listner
+    {
+        let global_tx_clone = global_tx.clone();
+        let local_tx_clone = local_tx.clone();
 
-async fn handle_stream(mut send: quinn::SendStream, mut recv: quinn::RecvStream) -> Result<(), Box<dyn Error>> {
-    let msg = recv.read_to_end(1024).await?;
-    let msg_str = String::from_utf8_lossy(&msg);
+        tokio::spawn( async move {
+            let url = "127.0.0.1:24810";
+            let listener: TcpListener = TcpListener::bind(url).await.expect("can't bind with this addr");
 
-    println!("Received: {}", msg_str);
+            println!("WS listening @ {}" , url);
 
-    send.write_all(b"Hello from the server!").await?;
-    println!("Replied and closed stream.");
+            while let Ok((stream , peer_addr)) = listener.accept().await {
+                println!("accept conn from {}" , peer_addr);
+                tokio::spawn(handle_ws(stream , peer_addr , local_tx_clone.clone() , global_tx_clone.clone()));
+            }
+        });
+    }
+
+    // tcp (global)
+    {
+        let global_tx_clone = global_tx.clone();
+        tokio::spawn(async move {
+            let url: &str = "0.0.0.0:24811";
+            let listener: TcpListener = TcpListener::bind(url).await.expect("can't bind with this addr");
+            println!("TCP listening @ {}" , url);
+
+            while let Ok((mut stream , addr)) = listener.accept().await {
+                let mut global_recv = global_tx_clone.subscribe();
+
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 1024];
+                    loop {
+                        tokio::select! {
+                            //ws ---- global boardcast ---- TCP ----> another computer 
+                            Ok(msg) = global_recv.recv() => {
+                                if let Err(e) = stream.write_all(msg.as_bytes()).await {
+                                    println!("TCP send Err : {}" , e);
+                                    break;
+                                }
+                            }
+
+                            result = stream.read(&mut buf) => {
+                                match result {
+                                    Ok(0) => {
+                                        println!("TCP peer disconnect ; {}" , addr);
+                                        break;
+                                    }
+                                    Ok(n) => {
+                                        let msg_str = String::from_utf8_lossy(&buf[..n]);
+                                        println!("Received via TCP : {}" , msg_str);
+                                    }
+
+                                    Err(e) => {
+                                        println!("TCP err : {}" , e);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }    
+
+    loop {
+        sleep(Duration::from_secs(60)).await;
+    }
     
-    Ok(())
+} 
+
+async fn handle_ws(
+    stream : TcpStream, 
+    peer_addr : std::net::SocketAddr, 
+    local_tx : broadcast::Sender<String>, 
+    global_tx : broadcast::Sender<String>) {
+
+    let ws_stream = match accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            println!("handshake err : {} (from {})" , e , peer_addr);
+            return;
+        }
+    };
+
+    let (mut ws_sender , mut ws_reciver) = ws_stream.split();
+
+    let mut local_recv = local_tx.subscribe();
+    loop {
+        tokio::select! {
+
+            //recv broadcast edge check --- ws ---> chrome ext
+            Ok(msg) = local_recv.recv() => {
+                if msg == "get_tabs" {
+                    let json_msg = serde_json::to_string(&ServerMsg::GetTabs).unwrap();
+                    if ws_sender.send(Message::Text(json_msg)).await.is_err() {
+                        println!("fail to send msg {}" , peer_addr);
+                        break;
+                    }
+                }
+            }
+
+            //recv chrome ext ---- ws ----> local computer ---- tcp ----> global computer 
+            Some(msg) = ws_reciver.next() => {
+                let msg = match msg {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        println!("Error reciving msg err : {} ,  from {} " , e , peer_addr);
+                        break;
+                    }
+                };
+
+                if let Message::Text(text) = msg {
+                    match serde_json::from_str::<ClientMsg>(&text) {
+                        
+                        //local computer ---- tcp ----> global computer
+                        Ok(ClientMsg::Tabs {tabs}) => {
+                            let json = serde_json::to_string(&tabs).unwrap();
+                            let _ = global_tx.send(json);
+                        }
+                        Err(e) => {
+                            println!("Failed to parse JSON from {}: {}", peer_addr, e);
+                            println!("Raw message was: {}", text);
+                        }
+                    }
+                } else if msg.is_close() {
+                    println!("{} disconnected.", peer_addr);
+                    break;
+                }
+            }
+
+        }
+    }
+    
 }

@@ -1,10 +1,4 @@
 chrome_leap-client/target/
 chrome_leap-server/target/
 
-chrome_leap-client/cert.der
-chrome_leap-client/key.der
-
-cert.der
-key.der
-
 target/
