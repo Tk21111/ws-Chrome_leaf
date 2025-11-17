@@ -1,7 +1,8 @@
 mod utils;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use utils::chrome::open_chrome; // import the function
+
+use tokio::net::{TcpStream};
+use tokio::io::{AsyncReadExt};
+use utils::chrome::open_chrome;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = TcpStream::connect("127.0.0.1:24811").await?;
     let mut buffer = [0u8; 1024];
     println!("server started");
-
+    
 
     loop {
         let n = stream.read(&mut buffer).await?;

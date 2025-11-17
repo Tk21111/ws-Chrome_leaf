@@ -1,3 +1,5 @@
+mod utils;
+
 use futures_util::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -7,6 +9,8 @@ use tokio::sync::broadcast;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
+
+use crate::utils::os_check::edge_check;
 #[derive(Serialize)]
 #[serde(tag = "action")]
 enum ServerMsg {
@@ -28,24 +32,14 @@ async fn main() {
     let (global_tx, _) = broadcast::channel::<String>(16);
 
     let _keep_local_alive = local_tx.clone();
-let _keep_global_alive = global_tx.clone();
-    //test only
-    //TODO - remplace this 
+    let _keep_global_alive = global_tx.clone();
+
+    
     // function ----- local_tx ----> ws 
     {
         let local_tx_clone = local_tx.clone();
-        tokio::spawn(async move {
-            // This task will run forever
-            loop {
-                // Wait for 10 seconds
-                sleep(Duration::from_secs(10)).await;
-
-                // Send the "edge hit" event to all listeners
-                println!("--- GLOBAL EVENT: Simulating edge hit! Broadcasting 'get_tabs' ---");
-                if let Err(e) = local_tx_clone.send("get_tabs".to_string()) {
-                    println!("Broadcast send error: {}", e);
-                }
-            }
+        edge_check(move || {
+            let _  = local_tx_clone.send("get_tabs".to_string());
         });
     }
 

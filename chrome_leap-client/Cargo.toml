@@ -8,3 +8,5 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0.100"
+rdev = "0.5.3"
+x-win = "5.3.2"
