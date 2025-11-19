@@ -44,7 +44,7 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
                         let x_at_left = x <= edge_screen;
                         let x_at_right = x >= screen_w - edge_screen;
 
-                        println!("{:?}" , x);
+                        // println!("{:?}" , x);
                         if x_at_left || x_at_right {
                             let held_for  =drag_start_thread.lock().unwrap().elapsed().as_millis();
                             // println!("{:?}" ,is_active_window_chrome());

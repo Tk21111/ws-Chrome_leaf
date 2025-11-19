@@ -22,6 +22,7 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
     std::thread::spawn(move || {
 
         listen(move | event :Event |{
+            println!("{:?}", event);
             match event.event_type {
                 EventType::ButtonPress(Button::Left) => {
                     draging_thread.store(true , Ordering::SeqCst);
@@ -43,9 +44,10 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
                         let x_at_left = x <= edge_screen;
                         let x_at_right = x >= screen_w - edge_screen;
 
+                        // println!("{:?}" , x);
                         if x_at_left || x_at_right {
                             let held_for  =drag_start_thread.lock().unwrap().elapsed().as_millis();
-
+                            // println!("{:?}" ,is_active_window_chrome());
                             if held_for > 300 && is_active_window_chrome(){
                                 on_edge_clone();
                             }
@@ -107,7 +109,7 @@ fn is_active_window_chrome() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn is_active_window_chrome() -> bool {
+fn is_active_window_chrome() -> bool { 
    
    use x_win::get_active_window;
 
