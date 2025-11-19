@@ -8,7 +8,7 @@ pub fn open_chrome(urls : Vec<String>) {
         #[cfg(target_os = "windows")]
         {
             std::process::Command::new("cmd")
-                .args(["/C", "start", "chrome", url])
+                .args(["/C", "start", "chrome", &url])
                 .spawn()
                 .expect("failed to open chrome");
         }

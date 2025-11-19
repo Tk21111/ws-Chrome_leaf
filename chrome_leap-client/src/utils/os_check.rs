@@ -22,7 +22,7 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
     std::thread::spawn(move || {
 
         listen(move | event :Event |{
-            println!("{:?}", event);
+            // println!("{:?}", event);
             match event.event_type {
                 EventType::ButtonPress(Button::Left) => {
                     draging_thread.store(true , Ordering::SeqCst);
@@ -63,47 +63,54 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
 
 #[cfg(target_os = "windows")]
 fn is_active_window_chrome() -> bool {
-    use window::Win32::{
-        UI::WindowsAndMessaging::*,
+    use windows::Win32::{
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
         System::ProcessStatus::K32GetModuleBaseNameA,
-        System::Threading::*,
-        Foundation::MAX_PATH
+        System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+        Foundation::{CloseHandle, MAX_PATH, HWND},
     };
 
-    //calling directly to os api use c with no guaruntee that there is no
-    //no not null_ptr pointer
     unsafe {
-        use std::os::unix::process;
-
         let fore_ground_window = GetForegroundWindow();
-        if fore_ground_window.0 == 0 {
+        
+        // HWND wraps an isize, so checking .0 == 0 works, but HWND(0) is cleaner
+        if fore_ground_window == HWND(std::ptr::null_mut()) {
             return false;
         }
 
-        //get window
         let mut pid = 0u32;
-        GetWindowThreadProcessId(fore_ground_window , Some(&mut pid));
+        GetWindowThreadProcessId(fore_ground_window, Some(&mut pid));
 
         if pid == 0 {
             return false;
         }
 
-        //get prcess
-        let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ , false , pid);
-        if process.0 == 0 {
-            return false;
-        }
-        
-        //get name the process window name
+        // FIX: OpenProcess returns Result<HANDLE>. Handle the Result, don't check for 0.
+        let process_handle = match OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 
+            false, 
+            pid
+        ) {
+            Ok(handle) => handle, // If successful, we get the HANDLE
+            Err(_) => return false, // If it fails (access denied, etc.), return false
+        };
+
         let mut name_buf = [0u8; MAX_PATH as usize];
+        
         let len = K32GetModuleBaseNameA(
-            process,
-            None,
+            process_handle,
+            None, // Use None instead of 0 for null HMODULE
             &mut name_buf,
         );
 
-        let name = String::from_utf8_lossy(&name_buf[..len as usize]).to_lowercase();   
+        // Important: Close the handle to avoid memory leaks!
+        let _ = CloseHandle(process_handle);
 
+        if len == 0 {
+            return false;
+        }
+
+        let name = String::from_utf8_lossy(&name_buf[..len as usize]).to_lowercase();   
         name.contains("chrome.exe") || name.contains("chrome")
     }
 }
