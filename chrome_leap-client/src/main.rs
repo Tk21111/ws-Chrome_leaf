@@ -1,13 +1,19 @@
 mod utils;
 
+use std::env;
+
 use tokio::net::{TcpStream};
 use tokio::io::{AsyncReadExt};
 use utils::chrome::open_chrome;
+use dotenv::dotenv;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
 
-    let mut stream = TcpStream::connect("127.0.0.1:24811").await?;
+    dotenv().ok();
+
+    let addr = format!("{}:24811" , env::var("PORT").unwrap());
+    let mut stream = TcpStream::connect(&addr).await?;
     let mut buffer = [0u8; 1024];
     println!("server started");
     

@@ -49,7 +49,7 @@ async fn main() {
         let local_tx_clone = local_tx.clone();
 
         tokio::spawn( async move {
-            let url = "127.0.0.1:24810";
+            let url = "0.0.0.0:24810";
             let listener: TcpListener = TcpListener::bind(url).await.expect("can't bind with this addr");
 
             println!("WS listening @ {}" , url);

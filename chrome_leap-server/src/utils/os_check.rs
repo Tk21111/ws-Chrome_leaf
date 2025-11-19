@@ -1,8 +1,8 @@
 use rdev::{listen, Event, EventType, Button, display_size};
-use std::sync::{
+use std::{sync::{
     Arc, 
     atomic::{AtomicBool, Ordering}
-};
+}, time::Duration};
 use std::time::{Instant};
 
 //Send save to send to another thread
@@ -12,12 +12,15 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
 
     let draging = Arc::new(AtomicBool::new(false)); 
     let drag_start = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let last_trigger = Arc::new(std::sync::Mutex::new(Instant::now() - Duration::from_secs(10))); // start in the past
+
 
     let draging_thread = draging.clone();
     let drag_start_thread = drag_start.clone();
 
     let on_edge = Arc::new(on_edge);
     let on_edge_clone = on_edge.clone();
+    let cooldown = 10000;
 
     std::thread::spawn(move || {
 
@@ -48,9 +51,11 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
                         // println!("{:?}" , screen_w);
                         if x_at_left || x_at_right {
                             let held_for  =drag_start_thread.lock().unwrap().elapsed().as_millis();
+                            let mut last = last_trigger.lock().unwrap();
                             // println!("{:?}" ,is_active_window_chrome());
-                            if held_for > 300 && is_active_window_chrome(){
+                            if held_for > 300 && is_active_window_chrome() && last.elapsed().as_millis() > cooldown{
                                 on_edge_clone();
+                                *last = Instant::now();
                             }
                         }
                     }
