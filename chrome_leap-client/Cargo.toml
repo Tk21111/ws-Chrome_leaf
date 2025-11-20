@@ -10,6 +10,8 @@ serde_json = "1.0"
 anyhow = "1.0.100"
 rdev = "0.5.3"
 x-win = "5.3.2"
+dotenv = "0.15"
+display-info = "0.5"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -19,4 +21,4 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_Debug", 
 ] }
 
-dotenv = "0.15"
+display-info = "0.5"

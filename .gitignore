@@ -1,4 +1,6 @@
 chrome_leap-client/target/
 chrome_leap-server/target/
+chrome_leap-client/.env
+chrome_leap-server/.env
 chrome_leap-andriod/
 target/

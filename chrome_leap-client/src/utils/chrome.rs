@@ -1,6 +1,6 @@
 use std::process::Command;
 
-pub fn open_chrome(urls : Vec<String>) {
+pub fn open_chrome(urls : &Vec<String>) {
 
     println!("URLs to open: {:?}", urls);
 

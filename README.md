@@ -10,11 +10,9 @@
 ## TODO
 - [x] Add window support
 - [x] Add Linux support 
-- [ ] Reconnect , Retry
-- [ ] Add phone support
+- [x] Reconnect , Retry
 - [ ] Add multiple device support
-- [ ] Offline 
-- [ ] multi screen support
+- [x] multi screen support
 
 ## VERSION
 

@@ -1,12 +1,15 @@
 mod utils;
 
+use futures_util::lock::Mutex;
 use futures_util::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::protocol::Message};
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -25,6 +28,12 @@ enum ClientMsg {
     Tabs { tabs: Vec<String> },
 }
 
+#[derive(Debug)]
+struct DeviceInfo {
+    ip: String,
+    tx : mpsc::Sender<String>,
+}
+type DeviceMap = Arc<Mutex<HashMap<String , DeviceInfo>>>;
 #[tokio::main]
 async fn main() {
 
@@ -34,7 +43,7 @@ async fn main() {
     let _keep_local_alive = local_tx.clone();
     let _keep_global_alive = global_tx.clone();
 
-    
+    let device_map  : DeviceMap = Arc::new(Mutex::new(HashMap::new()));
     // function ----- local_tx ----> ws 
     {
         let local_tx_clone = local_tx.clone();
@@ -47,6 +56,7 @@ async fn main() {
     {
         let global_tx_clone = global_tx.clone();
         let local_tx_clone = local_tx.clone();
+        let device_map_for_ws = device_map.clone();
 
         tokio::spawn( async move {
             let url = "0.0.0.0:24810";
@@ -56,20 +66,30 @@ async fn main() {
 
             while let Ok((stream , peer_addr)) = listener.accept().await {
                 println!("accept conn from {}" , peer_addr);
-                tokio::spawn(handle_ws(stream , peer_addr , local_tx_clone.clone() , global_tx_clone.clone()));
+                tokio::spawn(handle_ws(stream , peer_addr , local_tx_clone.clone() , global_tx_clone.clone() , device_map_for_ws.clone()));
             }
         });
     }
 
+
     // tcp (global)
     {
         let global_tx_clone = global_tx.clone();
+        let device_map_clone = device_map.clone();
         tokio::spawn(async move {
             let url: &str = "0.0.0.0:24811";
             let listener: TcpListener = TcpListener::bind(url).await.expect("can't bind with this addr");
             println!("TCP listening @ {}" , url);
 
             while let Ok((mut stream , addr)) = listener.accept().await {
+
+                let ip = addr.ip().to_string();
+
+                let (tx , mut rx) = mpsc::channel::<String>(32);
+                device_map_clone.lock().await.insert(
+                    ip.clone(),
+                    DeviceInfo { ip: ip.clone() , tx },
+                );
                 let mut global_recv = global_tx_clone.subscribe();
 
                 tokio::spawn(async move {
@@ -80,6 +100,14 @@ async fn main() {
                             Ok(msg) = global_recv.recv() => {
                                 if let Err(e) = stream.write_all(msg.as_bytes()).await {
                                     println!("TCP send Err : {}" , e);
+                                    break;
+                                }
+                            }
+
+                            //use some cause it cannot fail
+                            Some(msg) = rx.recv() => {
+                                if let Err(e) = stream.write_all(msg.as_bytes()).await {
+                                    print!("[TCP] by private Err : {}" , e);
                                     break;
                                 }
                             }
@@ -118,7 +146,9 @@ async fn handle_ws(
     stream : TcpStream, 
     peer_addr : std::net::SocketAddr, 
     local_tx : broadcast::Sender<String>, 
-    global_tx : broadcast::Sender<String>) {
+    global_tx : broadcast::Sender<String>,
+    device_map : DeviceMap,
+    ) {
 
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
@@ -161,7 +191,19 @@ async fn handle_ws(
                         //local computer ---- tcp ----> global computer
                         Ok(ClientMsg::Tabs {tabs}) => {
                             let json = serde_json::to_string(&tabs).unwrap();
-                            let _ = global_tx.send(json);
+                            let _ = global_tx.send(json.clone());
+
+                            let map_guard = device_map.lock().await;
+
+                            let target_ip = "";
+                            if let Some(device) = map_guard.get(target_ip) {
+                                if let Err(e) = device.tx.send(json.clone()).await {
+                                    println!("Fail to send {} , Err : {}" , target_ip , e);
+                                }
+                            } else {
+                                println!("Target device not found");
+                            }
+
                         }
                         Err(e) => {
                             println!("Failed to parse JSON from {}: {}", peer_addr, e);

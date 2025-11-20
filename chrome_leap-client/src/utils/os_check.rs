@@ -1,9 +1,10 @@
-use rdev::{listen, Event, EventType, Button, display_size};
-use std::sync::{
+use rdev::{listen, Event, EventType, Button};
+use std::{sync::{
     Arc, 
     atomic::{AtomicBool, Ordering}
-};
+}};
 use std::time::{Instant};
+use display_info::DisplayInfo;
 
 //Send save to send to another thread
 //Sync save to share between thread
@@ -18,6 +19,15 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
 
     let on_edge = Arc::new(on_edge);
     let on_edge_clone = on_edge.clone();
+
+    let monitor = DisplayInfo::all().unwrap();
+    let mut screen_w_sum = 0;
+    // let mut screen_h_sum = 0;
+
+    for ( _ ,m ) in monitor.iter().enumerate() {
+        screen_w_sum += m.width;
+        // screen_h_sum += m.height;
+    }
 
     std::thread::spawn(move || {
 
@@ -36,9 +46,8 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
 
                 EventType::MouseMove { x, y } => {
                     if draging_thread.load(Ordering::SeqCst) {
-                        let ( screen_w_u64 , screen_h_u64) = display_size().unwrap();
-                        let screen_w = screen_w_u64 as f64;
-                        let screen_h = screen_h_u64 as f64;
+                        let screen_w = screen_w_sum as f64;
+                        // let screen_h = screen_h_sum as f64;
                         let edge_screen = 15.0;
 
                         let x_at_left = x <= edge_screen;
