@@ -54,15 +54,17 @@ async fn main() {
     let device_map  : DeviceMap = Arc::new(Mutex::new(HashMap::new()));
 
     let screen_config =  load_config().unwrap_or_else(|e| {
-        eprintln!("[config] Config load error : {}" , e);
+        eprintln!("[CONFIG] Config load error : {}" , e);
         std::process::exit(1);
     });
     let screen_config_map = build_map(&screen_config);
 
-    // function ----- local_tx ----> ws 
+    // [edge_checker] ----- local_channel ----> ws 
     {
         let local_tx_clone = local_tx.clone();
         edge_check(move |edge| {
+
+            // edge_checker ----- [local_channel] ----> ws 
             match edge {
                 Edge::Left => {
                     let _  = local_tx_clone.send("get_tabs-left".to_string());
@@ -75,20 +77,20 @@ async fn main() {
     }
 
     //websocket listner
+    //[ws] ---- global_boardcast ---- TCP ----> another computer 
     {
-        let global_tx_clone = global_tx.clone();
         let local_tx_clone = local_tx.clone();
         let device_map_for_ws = device_map.clone();
 
         tokio::spawn( async move {
             let url = "0.0.0.0:24810";
-            let listener: TcpListener = TcpListener::bind(url).await.expect("[ws] can't bind with this addr");
+            let listener: TcpListener = TcpListener::bind(url).await.expect("[WS] can't bind with this addr");
 
-            println!("[ws] listening @ {}" , url);
+            println!("[WS] listening @ {}" , url);
 
             while let Ok((stream , peer_addr)) = listener.accept().await {
-                println!("[ws] accept conn from {}" , peer_addr);
-                tokio::spawn(handle_ws(stream , peer_addr , local_tx_clone.clone() , global_tx_clone.clone() , device_map_for_ws.clone()));
+                println!("[WS] accept conn from {}" , peer_addr);
+                tokio::spawn(handle_ws(stream , peer_addr , local_tx_clone.clone(), device_map_for_ws.clone()));
             }
         });
     }
@@ -99,6 +101,7 @@ async fn main() {
         let global_tx_clone = global_tx.clone();
         let device_map_clone = device_map.clone();
         let screen_config_map_clone = screen_config_map.clone();
+
         tokio::spawn(async move {
             let url: &str = "0.0.0.0:24811";
             let listener: TcpListener = TcpListener::bind(url).await.expect("[tcp] can't bind with this addr");
@@ -106,40 +109,48 @@ async fn main() {
 
             while let Ok((mut stream , addr)) = listener.accept().await {
 
+                println!("[TCP] connection from : {}" , addr);
                 let ip = addr.ip().to_string();
 
+                //channel
+                let mut global_recv = global_tx_clone.subscribe();
                 let (tx , mut rx) = mpsc::channel::<String>(32);
 
                 //compare with config set edge accordingly
                 if let Some(edge) = screen_config_map_clone.get(&ip) {
+                    println!("[CONFIG] registor from : {}" , addr);
                     device_map_clone.lock().await.insert(
                         edge.clone(),
                         DeviceInfo { ip: ip.clone() , tx},
                     );
                 }
                 
-                let mut global_recv = global_tx_clone.subscribe();
-
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 1024];
                     loop {
                         tokio::select! {
-                            //ws ---- global boardcast ---- TCP ----> another computer 
+                            //ws ---- [global_boardcast] ---- TCP ----> another computer 
                             Ok(msg) = global_recv.recv() => {
+
+                                // ws --- global boardcast ---- [TCP] -----> another computer
                                 if let Err(e) = stream.write_all(msg.as_bytes()).await {
-                                    println!("[TCP] send msg Err : {}" , e);
+                                    println!("[TCP] forwarding fail @ global channel : {}" , e);
                                     break;
                                 }
                             }
 
                             //use some cause it cannot fail
+                            //recv chrome_ext ---- ws ----> forwarder ---- private_channel ----- [tcp] ----> another_computer 
                             Some(msg) = rx.recv() => {
+
+                                
                                 if let Err(e) = stream.write_all(msg.as_bytes()).await {
-                                    print!("[TCP] forward from local channel Err : {}" , e);
+                                    print!("[TCP] forwarding fail @ private channel : {}" , e);
                                     break;
                                 }
                             }
 
+                            //another computer ---- [TCP] ----> local computer
                             result = stream.read(&mut buf) => {
                                 match result {
                                     Ok(0) => {
@@ -174,35 +185,39 @@ async fn handle_ws(
     stream : TcpStream, 
     peer_addr : std::net::SocketAddr, 
     local_tx : broadcast::Sender<String>, 
-    global_tx : broadcast::Sender<String>,
     device_map : DeviceMap,
     ) {
 
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
-            println!("[ws] handshake err : {} (from {})" , e , peer_addr);
+            println!("[WS][handle_ws] handshake err : {} (from {})" , e , peer_addr);
             return;
         }
     };
-
     let (mut ws_sender , mut ws_reciver) = ws_stream.split();
-
     let mut local_recv = local_tx.subscribe();
+
     loop {
         tokio::select! {
 
-            //recv broadcast edge check --- ws ---> chrome ext
             //why use - instead of json welll.... i don't know i expect this to be faster ;)
             //TODO - find evident to back this up ¯\(ツ)/¯
+
+            //edge checker ----- [local_channel] -----> forwarder --- ws ---> chrome_ext
             Ok(msg) = local_recv.recv() => {
                 if let Some(msg_type) = msg.split('-').next() {
                     if msg_type == "get_tabs" {
+
+                        //edge checker ----- local_channel -----> [forwarder] --- ws ---> chrome_ext
                         let edge = msg.split('-').nth(1).unwrap_or("");
                         match serde_json::to_string(&ServerMsg::GetTabs {edge : edge.to_string()}) {
                             Ok(json_msg) => {
+                                println!("[WS] send to get_tabs to {}" , peer_addr);
+
+                                //edge checker ----- local_channel -----> forwarder --- [ws] ---> chrome_ext
                                 if let Err(e) = ws_sender.send(Message::Text(json_msg)).await {
-                                    eprintln!("[ws] fail to send msg to {} , err : {}" , peer_addr , e);
+                                    eprintln!("[WS] fail to send msg to {} , err : {}" , peer_addr , e);
                                     break; //ws prob disconnect so we break
                                 }
                             }
@@ -216,34 +231,36 @@ async fn handle_ws(
                 }
             }
 
-            //recv chrome ext ---- ws ----> local computer ---- tcp ----> global computer 
+            //recv chrome_ext ---- [ws] ----> forwarder ----- private_channel ---- tcp ----> another_computer 
             Some(msg) = ws_reciver.next() => {
+
+                println!("[WS] forwarding from perr {}" , peer_addr);
                 let msg = match msg {
                     Ok(msg) => msg,
                     Err(e) => {
-                        println!("[ws] Error reciving msg err : {} ,  from {} " , e , peer_addr);
+                        println!("[WS] Error reciving msg err : {} ,  from {} " , e , peer_addr);
                         break;
                     }
                 };
 
+                //recv chrome_ext ---- ws ----> [forwarder] ----  private_channel ----- tcp ----> another_computer
+                //convert edge --> tcp specific stream 
                 if let Message::Text(text) = msg {
                     match serde_json::from_str::<ClientMsg>(&text) {
-                        
-                        //local computer ---- tcp ----> global computer
                         Ok(ClientMsg::Tabs {tabs , edge}) => {
                             let json = serde_json::to_string(&tabs).unwrap();
-                            let _ = global_tx.send(json.clone());
-
                             let map_guard = device_map.lock().await;
 
                             if let Some(device) = map_guard.get(&edge) {
-                                if let Err(e) = device.tx.send(json.clone()).await {
-                                    println!("[tcp] Fail to send ip : {} , edge : {}, Err : {}" , device.ip , edge , e);
-                                }
-                            } else {
-                                println!("[device_map] Target device with edge : {} not found" ,edge);
-                            }
 
+                                //recv chrome_ext ---- ws ----> forwarder ---- [private_channel] ----- tcp ----> another_computer 
+                                if let Err(e) = device.tx.send(json.clone()).await {
+                                    println!("[TCP][GLOBAL_CHANNEL] Fail to send ip : {} , edge : {}, Err : {}" , device.ip , edge , e);
+                                }
+
+                            } else {
+                                println!("[TCP][CONFIG] Target device with edge : {} not found in " ,edge);
+                            }
                         }
                         Err(e) => {
                             println!("[serde json] Failed to parse JSON from {}: {}", peer_addr, e);
@@ -251,7 +268,7 @@ async fn handle_ws(
                         }
                     }
                 } else if msg.is_close() {
-                    println!("[tcp] {} disconnected.", peer_addr);
+                    println!("[WS] {} disconnected.", peer_addr);
                     break;
                 }
             }
@@ -261,7 +278,7 @@ async fn handle_ws(
     
 }
 
-
+//==== handle config =====
 #[derive(Debug, Deserialize)]
 struct Config {
     devices: Vec<Device>

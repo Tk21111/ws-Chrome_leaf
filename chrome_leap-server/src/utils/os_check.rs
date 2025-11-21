@@ -61,8 +61,10 @@ pub fn edge_check<F>(on_edge : F) where F : Fn(Edge) + Send + Sync + 'static{
                             // println!("{:?}" ,is_active_window_chrome());
                             if held_for > 300 && is_active_window_chrome() && last.elapsed().as_millis() > cooldown{
                                 if x_at_left {
+                                    // println!("left");
                                     on_edge_clone(Edge::Left);
                                 } else {
+                                    // println!("right");
                                     on_edge_clone(Edge::Right);
                                 }
                                 *last = Instant::now();
