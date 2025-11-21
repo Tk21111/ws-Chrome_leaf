@@ -22,7 +22,7 @@ async function conn() {
             try {
                 const data = JSON.parse(event.data);
                 if (data.action === "get_tabs") {
-                    ws.send(JSON.stringify({action : "tabs" , tabs : tabsGlobal || []}));
+                    ws.send(JSON.stringify({action : "tabs" , tabs : tabsGlobal || [] , edge : data.edge || ""}));
                     
                 } else if (data.action === "tel") {
                     const windowId = null

@@ -8,7 +8,13 @@ use std::time::{Instant};
 //Send save to send to another thread
 //Sync save to share between thread
 //static lifetime must remain constant ( life ) during program
-pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
+
+pub enum Edge {
+    Left,
+    Right,
+}
+
+pub fn edge_check<F>(on_edge : F) where F : Fn(Edge) + Send + Sync + 'static{
 
     let draging = Arc::new(AtomicBool::new(false)); 
     let drag_start = Arc::new(std::sync::Mutex::new(Instant::now()));
@@ -54,7 +60,11 @@ pub fn edge_check<F>(on_edge : F) where F : Fn() + Send + Sync + 'static{
                             let mut last = last_trigger.lock().unwrap();
                             // println!("{:?}" ,is_active_window_chrome());
                             if held_for > 300 && is_active_window_chrome() && last.elapsed().as_millis() > cooldown{
-                                on_edge_clone();
+                                if x_at_left {
+                                    on_edge_clone(Edge::Left);
+                                } else {
+                                    on_edge_clone(Edge::Right);
+                                }
                                 *last = Instant::now();
                             }
                         }
