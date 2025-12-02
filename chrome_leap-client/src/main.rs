@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream};
-use tokio::io::{AsyncReadExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use utils::chrome::open_chrome;
 use dotenv::dotenv;
 
@@ -47,20 +47,11 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let mut buffer = [0u8; 1024];
-    println!("started");
+    let reader = BufReader::new(stream);
+    let mut lines = reader.lines();
 
-    loop {
-        let n = stream.read(&mut buffer).await?;
-
-        if n == 0 {
-            return Err(anyhow::anyhow!("server close connetion"));
-        }
-
-        let msg = String::from_utf8_lossy(&buffer[..n]);
-        println!("Received : {}" , msg);
-
-        match serde_json::from_str::<GlobalMsg>(&msg) {
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<GlobalMsg>(&line) {
             Ok(GlobalMsg::Tabs { tabs, time }) => {
                 println!("Sent time: {}", time);
                 let now = time_now_ms();
@@ -68,10 +59,12 @@ async fn main() -> anyhow::Result<()> {
                 println!("Elapsed: {} ns", now - sent_time);
                 println!("Elapsed: {:.3} ms", (now - sent_time) as f64 / 1_000_000.0);
 
-                // open_chrome(&tabs);
+                open_chrome(&tabs);
             }
             Err(e) => println!("Decode json Err: {}", e),
         }
     }
+
+    Ok(())
     
 }

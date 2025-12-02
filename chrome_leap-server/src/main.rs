@@ -266,7 +266,7 @@ async fn handle_ws(
                                     let map_guard = device_map.lock().await;
                                     if let Some(device) = map_guard.get(&edge) {
                                         //recv chrome_ext ---- ws ----> forwarder ---- [private_channel] ----- tcp ----> another_computer 
-                                        if let Err(e) = device.tx.send(json.clone()).await {
+                                        if let Err(e) = device.tx.send(json + "\n").await {
                                             println!("[TCP][GLOBAL_CHANNEL] Fail to send ip : {} , edge : {}, Err : {}" , device.ip , edge , e);
                                         }
 
