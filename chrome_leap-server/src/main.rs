@@ -1,5 +1,6 @@
 mod utils;
 
+use std::time::{SystemTime ,UNIX_EPOCH};
 use futures_util::lock::Mutex;
 use futures_util::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -34,6 +35,13 @@ enum ClientMsg {
     // AND THIS WILL BE {action : edge , tabs : [...]}
     // #[serde(rename = "edge")]
     // Edge { tabs: Vec<String> },
+}
+
+#[derive(Deserialize, Debug , Serialize)]
+#[serde(tag = "action")]
+enum GlobalMsg {
+    #[serde(rename = "tabs")]
+    Tabs { tabs: Vec<String> , time : String}
 }
 
 #[derive(Debug)]
@@ -248,19 +256,30 @@ async fn handle_ws(
                 if let Message::Text(text) = msg {
                     match serde_json::from_str::<ClientMsg>(&text) {
                         Ok(ClientMsg::Tabs {tabs , edge}) => {
-                            let json = serde_json::to_string(&tabs).unwrap();
-                            let map_guard = device_map.lock().await;
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_nanos()// timestamp ms
+                                .to_string();
+                            match serde_json::to_string(&GlobalMsg::Tabs { tabs : tabs , time : now}) {
+                                Ok(json) => {
+                                    let map_guard = device_map.lock().await;
+                                    if let Some(device) = map_guard.get(&edge) {
+                                        //recv chrome_ext ---- ws ----> forwarder ---- [private_channel] ----- tcp ----> another_computer 
+                                        if let Err(e) = device.tx.send(json.clone()).await {
+                                            println!("[TCP][GLOBAL_CHANNEL] Fail to send ip : {} , edge : {}, Err : {}" , device.ip , edge , e);
+                                        }
 
-                            if let Some(device) = map_guard.get(&edge) {
-
-                                //recv chrome_ext ---- ws ----> forwarder ---- [private_channel] ----- tcp ----> another_computer 
-                                if let Err(e) = device.tx.send(json.clone()).await {
-                                    println!("[TCP][GLOBAL_CHANNEL] Fail to send ip : {} , edge : {}, Err : {}" , device.ip , edge , e);
+                                    } else {
+                                        println!("[TCP][CONFIG] Target device with edge : '{}' not found in " ,edge );
+                                    }
                                 }
-
-                            } else {
-                                println!("[TCP][CONFIG] Target device with edge : {} not found in " ,edge);
+                                Err(e) => {
+                                    println!("[TCP][JSON] serialize error: {}", e);
+                                }
                             }
+
+                            
                         }
                         Err(e) => {
                             println!("[serde json] Failed to parse JSON from {}: {}", peer_addr, e);

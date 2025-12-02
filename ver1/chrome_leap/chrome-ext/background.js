@@ -24,6 +24,7 @@ async function conn() {
                 if (data.action === "get_tabs") {
 
                     console.log(tabsGlobal);
+                    console.log(data)
                     ws.send(JSON.stringify({action : "tabs" , tabs : tabsGlobal || [] , edge : data.edge || ""}));
                     
                 } else if (data.action === "tel") {

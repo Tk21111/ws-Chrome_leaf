@@ -1,7 +1,0 @@
-[[devices]]
-edge = "left"
-ip = "127.0.0.2"
-
-[[devices]]
-edge = "right"
-ip = "127.0.0.1"
